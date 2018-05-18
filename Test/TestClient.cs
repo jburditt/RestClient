@@ -4,13 +4,15 @@ using System;
 
 namespace RestClient.Tests
 {
-    public class TestClient : BaseClient, ITestClient
+    public class TestClient : ITestClient
     {
+        private readonly RestSharpClient _client;
         private readonly ILogging _logging;
         private readonly TestClientConfig _config;
 
         public TestClient(ILogging logging, IRestClient client, TestClientConfig config) : base(logging, client, config.BaseUrl)
         {
+            _client = client;
             _config = config;
             _logging = logging;
 
@@ -26,7 +28,7 @@ namespace RestClient.Tests
 
             var enableTracing = ApplicationSettings.EnableAddTestTracing;
 
-            return ExecuteApi<ViewModelResponse>(request, enableTracing);
+            return _client.ExecuteApi<ViewModelResponse>(request, enableTracing);
         }
     }
 }
