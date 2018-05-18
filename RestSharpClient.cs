@@ -11,7 +11,7 @@ namespace RestClient
     /// <summary>
     /// based on https://exceptionnotfound.net/extending-restsharp-to-handle-timeouts-in-asp-net-mvc/
     /// </summary>
-    public class BaseClient
+    public class RestSharpClient
     {
         private IRestClient _client;
         private ILogging _logging;
@@ -24,91 +24,73 @@ namespace RestClient
             _logging = logging;
         }
 
-        #region RestClient override methods
+                #region RestClient override methods
 
-        protected ApiStatusResult Execute(IRestRequest request)
-        {
-            var response = _client.Execute(request);
-            ErrorCheck(request, response);
-
-            return BuildApiStatusResult(response);
-        }
-
-        protected Tuple<ApiStatusResult, T> Execute<T>(IRestRequest request) where T : new()
-        {
-            var response = _client.Execute<T>(request);
-            ErrorCheck(request, response);
-
-            var result = response.Data;                        // result from service
-
-            // status result
-            var apiStatusResult = BuildApiStatusResult(response);
-
-            return new Tuple<ApiStatusResult, T>(apiStatusResult, result);
-        }
-
-        protected Tuple<ApiStatusResult, T> ExecuteApi<T>(IRestRequest request, bool enableTracing = false) where T : new()
+        public Tuple<HttpStatusCode, string> Execute(IRestRequest request, bool enableTracing = false)
         {
             if (enableTracing) TraceRequest(request);
 
-            var response = _client.Execute<ApiResult>(request);
+            var response = _client.Execute(request);
             ErrorCheck(request, response);
 
-            var apiResult = response.Data;                        // result from service
-            var result = default(T);
-
-            if (response.StatusCode == HttpStatusCode.OK)
-                if (apiResult?.Result != null)
-                {
-                    var json = JsonConvert.SerializeObject(apiResult.Result);
-                    result = JsonConvert.DeserializeObject<T>(json); // serialize result field from apiresult
-                }
-
-            // this is just apiresult but stripped of json result, to avoid confusion and force use of TResponse
-            var statusResponse = new ApiStatusResult
-            {
-                Errors = apiResult?.Errors,
-                Message = apiResult?.Message,
-                StatusCode = apiResult?.StatusCode ?? HttpStatusCode.InternalServerError
-            };
-
-            return new Tuple<ApiStatusResult, T>(statusResponse, result);
+            return new Tuple<HttpStatusCode, string>(response.StatusCode, response.ErrorMessage);
         }
 
-        protected async Task<ApiStatusResult> ExecuteTaskAsync(IRestRequest request)
+        /// <summary>
+        /// T must be ApiResponse<TResponse>
+        /// </summary>
+        public T Execute<T>(IRestRequest request, bool enableTracing = false) where T : new()
         {
+            if (enableTracing) TraceRequest(request);
+
+            var response = _client.Execute<T>(request);
+            ErrorCheck(request, response);
+
+            // if client returns anything unusual, use reflection to pass this back to T (ApiResponse)
+            if (response.Data == null && response.StatusCode != HttpStatusCode.OK)
+            {
+                response.Data = new T();
+                response.Data.SetProperty("StatusCode", response.StatusCode);
+                response.Data.SetProperty("Message", response.ErrorMessage);
+            }
+
+            return response.Data;
+        }
+
+        public async Task<Tuple<HttpStatusCode, string>> ExecuteAsync(IRestRequest request, bool enableTracing = false)
+        {
+            if (enableTracing) TraceRequest(request);
+
             var response = await _client.ExecuteTaskAsync(request);
             ErrorCheck(request, response);
 
-            return BuildApiStatusResult(response);
+            return new Tuple<HttpStatusCode, string>(response.StatusCode, response.ErrorMessage);
         }
 
-        protected async Task<Tuple<ApiStatusResult, T>> ExecuteTaskAsync<T>(IRestRequest request)
+        /// <summary>
+        /// T must be ApiResponse<TResponse>
+        /// </summary>
+        public async Task<T> ExecuteAsync<T>(IRestRequest request, bool enableTracing = false) where T : new()
         {
+            if (enableTracing) TraceRequest(request);
+
             var response = await _client.ExecuteTaskAsync<T>(request);
             ErrorCheck(request, response);
 
-            var result = response.Data;                        // result from service
+            // if client returns anything unusual, use reflection to pass this back to T (ApiResponse)
+            if (response.Data == null && response.StatusCode != HttpStatusCode.OK)
+            {
+                response.Data = new T();
+                response.Data.SetProperty("StatusCode", response.StatusCode);
+                response.Data.SetProperty("Message", response.ErrorMessage);
+            }
 
-            // status result
-            var apiStatusResult = BuildApiStatusResult(response);
-
-            return new Tuple<ApiStatusResult, T>(apiStatusResult, result);
+            return response.Data;
         }
 
         #endregion RestClient override methods
 
         #region private methods
-
-        private ApiStatusResult BuildApiStatusResult(IRestResponse response)
-        {
-            // status result, status code and error message
-            var apiStatusResult = new ApiStatusResult();
-            apiStatusResult.StatusCode = response?.StatusCode ?? HttpStatusCode.BadRequest;
-            apiStatusResult.Message = response?.ErrorMessage;
-
-            return apiStatusResult;
-        }
 
         private void LogError(IRestRequest request, IRestResponse response)
         {
